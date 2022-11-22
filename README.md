@@ -3,7 +3,7 @@ Sound Event Detection and Separation in Domestic Environments
 
 ---
 
-This repository is the AUDIAS-UAM fork of the DCASE Challenge Task 4 Baseline system. The code developed for our participations in the challenge and related publications will be published here (work in progress). Additionally, a list of our publications and results in the challenge is provided.
+This repository is the [**AUDIAS-UAM**](https://github.com/Audias-UAM) fork of the [DCASE Challenge Task 4 repo](https://github.com/DCASE-REPO/DESED_task). The code developed for our participations in the challenge and related publications will be published here (work in progress). Additionally, a list of our publications and results in the challenge is provided.
 
 ## Publications
 
