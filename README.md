@@ -7,15 +7,15 @@ This repository is the AUDIAS-UAM fork of the DCASE Challenge Task 4 Baseline sy
 
 ## Publications
 
-* Diego de Benito-Gorrón, Katerina Zmolikova, and Doroteo T. Toledano, “Source Separation for Sound Event Detection in Domestic Environments Using Jointly Trained Models”. 2022 International Workshop on Acoustic Signal Enhancement (IWAENC), Bamberg, Germany, Sep. 2022.
+* Diego de Benito-Gorrón, Katerina Zmolikova, and Doroteo T. Toledano, **“Source Separation for Sound Event Detection in Domestic Environments Using Jointly Trained Models”**. *2022 International Workshop on Acoustic Signal Enhancement (IWAENC), Bamberg, Germany, Sep. 2022.* [🔗](https://ieeexplore.ieee.org/abstract/document/9914755)
 
-* Diego de Benito-Gorrón, Daniel Ramos, and Doroteo T. Toledano, “An Analysis of Sound Event Detection under Acoustic Degradation Using Multi-Resolution Systems”. Applied Sciences. 2021; 11(23):11561. DOI: 10.3390/app112311561 
+* Diego de Benito-Gorrón, Daniel Ramos, and Doroteo T. Toledano, **“An Analysis of Sound Event Detection under Acoustic Degradation Using Multi-Resolution Systems”**. *Applied Sciences. 2021; 11(23):11561. DOI: 10.3390/app112311561* [🔗](https://doi.org/10.3390/app112311561)
 
-* Diego de Benito-Gorrón, Sergio Segovia, Daniel Ramos, and Doroteo T. Toledano, “Multiple Feature Resolutions for Different Polyphonic Sound Detection Score Scenarios in DCASE 2021 Task 4”. Detection and Classification of Acoustic Scenes and Events Workshop (DCASE), Barcelona, Spain, Nov. 2021.
+* Diego de Benito-Gorrón, Sergio Segovia, Daniel Ramos, and Doroteo T. Toledano, **“Multiple Feature Resolutions for Different Polyphonic Sound Detection Score Scenarios in DCASE 2021 Task 4”**. *Detection and Classification of Acoustic Scenes and Events Workshop (DCASE), Barcelona, Spain, Nov. 2021.* [🔗](https://dcase.community/documents/workshop2021/proceedings/DCASE2021Workshop_d_26.pdf)
 
-* Diego de Benito-Gorrón, Daniel Ramos, and Doroteo T. Toledano, “A Multi-resolution CRNN-based approach for semi-supervised Sound Event Detection in DCASE 2020 challenge”. IEEE Access, vol. 9, pp. 89029-89042, (2021). DOI: 10.1109/ACCESS.2021.3088949
+* Diego de Benito-Gorrón, Daniel Ramos, and Doroteo T. Toledano, **“A Multi-resolution CRNN-based approach for semi-supervised Sound Event Detection in DCASE 2020 challenge”**. *IEEE Access, vol. 9, pp. 89029-89042, (2021). DOI: 10.1109/ACCESS.2021.3088949* [🔗](https://doi.org/10.1109/ACCESS.2021.3088949)
 
-* Diego de Benito-Gorrón, Daniel Ramos, and Doroteo T. Toledano, “A Multi-resolution Approach to Sound Event Detection in DCASE 2020 Task4”. Detection and Classification of Acoustic Scenes and Events Workshop (DCASE), Tokyo, Japan, Nov. 2020.
+* Diego de Benito-Gorrón, Daniel Ramos, and Doroteo T. Toledano, **“A Multi-resolution Approach to Sound Event Detection in DCASE 2020 Task4”**. *Detection and Classification of Acoustic Scenes and Events Workshop (DCASE), Tokyo, Japan, Nov. 2020.* [🔗](https://dcase.community/documents/workshop2020/proceedings/DCASE2020Workshop_de-Benito-Gorron_51.pdf)
 
 
 ## AUDIAS-UAM participations in DCASE Challenge Task 4
