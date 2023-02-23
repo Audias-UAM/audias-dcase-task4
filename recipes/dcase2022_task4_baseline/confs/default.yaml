@@ -64,6 +64,9 @@ feats:
   sample_rate: 16000
   f_min: 0
   f_max: 8000
+post-processing:
+  class-wise: False
+  obj_metric: "eventf1" #[eventf1, psds1, psds2]
 net:
   dropout: 0.5
   rnn_layers: 2
