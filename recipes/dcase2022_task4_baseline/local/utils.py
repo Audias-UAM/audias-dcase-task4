@@ -100,8 +100,10 @@ def log_sedeval_metrics(predictions, ground_truth, save_dir=None):
     return (
         event_res.results()["class_wise_average"]["f_measure"]["f_measure"],
         event_res.results()["overall"]["f_measure"]["f_measure"],
+        event_res.results()["class_wise"],
         segment_res.results()["class_wise_average"]["f_measure"]["f_measure"],
         segment_res.results()["overall"]["f_measure"]["f_measure"],
+        segment_res.results()["class_wise"],
     )  # return also segment measures
 
 
