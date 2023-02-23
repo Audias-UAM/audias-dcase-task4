@@ -10,19 +10,57 @@ import json
 import soundfile
 import glob
 
+import functools
+from dcase_util.data import ProbabilityEncoder
+from scipy.signal import medfilt
+
+
+def median_filt_1d(event_roll, filt_span=7):
+    """FUNCTION TO APPLY MEDIAN FILTER
+    ARGS:
+    --
+    event_roll: event roll [T,C]
+    filt_span: median filter span(integer odd scalar)
+    RETURN:
+    --
+    event_roll : median filter applied event roll [T,C]
+    """
+    assert isinstance(filt_span, (int, list))
+    if len(event_roll.shape) == 1:
+        event_roll = medfilt(event_roll, filt_span)
+    else:
+        if isinstance(filt_span, int):
+            for i in range(event_roll.shape[1]):
+                event_roll[:, i] = medfilt(event_roll[:, i], filt_span)
+        else:
+            assert event_roll.shape[1] == len(filt_span)    
+            for i in range(event_roll.shape[1]):
+                event_roll[:, i] = medfilt(event_roll[:, i], filt_span[i])
+    return event_roll
 
 def batched_decode_preds(
-    strong_preds, filenames, encoder, thresholds=[0.5], median_filter=7, pad_indx=None,
+    strong_preds, 
+    filenames, 
+    encoder, 
+    thresholds=[0.5], 
+    median_filter=7, 
+    binarization_type="global_threshold",
+    cw_thresholds = None,
+    pad_indx=None,
 ):
     """ Decode a batch of predictions to dataframes. Each threshold gives a different dataframe and stored in a
-    dictionary
-
+    dictionary. ADAPT FOR CLASS-WISE POST-PROCESSING
+    -- Para calcular la PSDS utilizar c_th para obtner todos los thresholds, por tanto aunque queramos un 
+    post-procesado por clase, el tipo de binarizacón siempre tiene que ser GLOBAL, pero median filter será
+    una lista en vez de un número entero 
     Args:
         strong_preds: torch.Tensor, batch of strong predictions.
         filenames: list, the list of filenames of the current batch.
         encoder: ManyHotEncoder object, object used to decode predictions.
         thresholds: list, the list of thresholds to be used for predictions.
-        median_filter: int, the number of frames for which to apply median window (smoothing).
+        median_filter: int or list, the number of frames for which to apply median window (smoothing).
+        binarization_type: str, type of binarization (global_threshold or class_threshold).
+        cw_thresholds: list of thresholds used for class-wise binarization.
         pad_indx: list, the list of indexes which have been used for padding.
 
     Returns:
@@ -40,8 +78,25 @@ def batched_decode_preds(
                 true_len = int(c_preds.shape[-1] * pad_indx[j].item())
                 c_preds = c_preds[:true_len]
             pred = c_preds.transpose(0, 1).detach().cpu().numpy()
-            pred = pred > c_th
-            pred = scipy.ndimage.filters.median_filter(pred, (median_filter, 1))
+            #Threshold
+            if binarization_type == "global_threshold":
+                pred = pred > c_th
+                pred = pred.astype(int)
+            elif binarization_type == "class_threshold":
+                pred = ProbabilityEncoder().binarization(
+                    pred,
+                    binarization_type = binarization_type,
+                    threshold=cw_thresholds,
+                    time_axis=0,
+                )
+            if isinstance(median_filter, int):
+                #Global median filtering 
+                pred = scipy.ndimage.filters.median_filter(pred, (median_filter, 1))
+            else:
+                #Class-wise median filtering
+                post_process = functools.partial(median_filt_1d, filt_span=median_filter)
+                pred = post_process(pred)
+
             pred = encoder.decode_strong(pred)
             pred = pd.DataFrame(pred, columns=["event_label", "onset", "offset"])
             pred["filename"] = Path(filenames[j]).stem + ".wav"
