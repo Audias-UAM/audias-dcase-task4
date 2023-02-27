@@ -249,3 +249,93 @@ def compute_psds_from_operating_points(
         )
 
     return psds_score.value
+
+def auc(x, y, max_x=None, decreasing_y=False):
+        """Compute area under curve described by the given x, y points.
+        To avoid an overestimate the area in case of large gaps between
+        points, the area is computed as sums of rectangles rather than
+        trapezoids (np.trapz).
+        Both x and y must be non-decreasing 1-dimensional numpy.ndarray. In
+        particular cases it is necessary to relax such constraint for y. This
+        can be done by setting allow_decrease_y to True.
+        The non-decreasing property is verified if
+        for all i in {2, ..., x.size}, x[i-1] <= x[i]
+        Args:
+            x (numpy.ndarray): 1-D array containing non-decreasing
+                values for x-axis
+            y (numpy.ndarray): 1-D array containing non-decreasing
+                values for y-axis
+            max_x (float): maximum x-coordinate for area computation
+            decreasing_y (bool): controls the check for non-decreasing property
+                of y
+        Returns:
+             A float that represents the area under curve
+        Raises:
+            PSDSEvalError: If there is an issue with the input data
+        """
+        if not isinstance(x, np.ndarray) or not isinstance(y, np.ndarray):
+            raise PSDSEvalError("x and y must be provided as a numpy.ndarray")
+        if x.ndim > 1 or y.ndim > 1:
+            raise PSDSEvalError("x or y are not 1-dimensional numpy.ndarray")
+        if x.size != y.size:
+            raise PSDSEvalError(f"x and y must be of equal "
+                                f"length {x.size} != {y.size}")
+        if np.any(np.diff(x) < 0):
+            raise PSDSEvalError("non-decreasing property not verified for x")
+        if not decreasing_y and np.any(np.diff(y) < 0):
+            raise PSDSEvalError("non-decreasing property not verified for y")
+        _x = np.array(x)
+        _y = np.array(y)
+
+        if max_x is None:
+            max_x = _x.max()
+        if max_x not in _x:
+            # add max_x to x and the correspondent y value
+            _x = np.sort(np.concatenate([_x, [max_x]]))
+            max_i = int(np.argwhere(_x == max_x))
+            _y = np.concatenate([_y[:max_i], [_y[max_i-1]], _y[max_i:]])
+        valid_idx = _x <= max_x
+        dx = np.diff(_x[valid_idx])
+        _y = np.array(_y[valid_idx])[:-1]
+        if dx.size != _y.size:
+            raise PSDSEvalError(f"{dx.size} != {_y.size}")
+        return np.sum(dx * _y)
+
+def compute_psds_classwise(
+    prediction_dfs, 
+    ground_truth_file, 
+    durations_file, 
+    classes_labels, 
+    dtc_threshold=0.5, 
+    gtc_threshold=0.5, 
+    cttc_threshold=0.3,
+    alpha_ct=0, 
+    alpha_st=0, 
+    max_efpr=100):
+
+    gt = pd.read_csv(ground_truth_file, sep="\t")
+    durations = pd.read_csv(durations_file, sep="\t")
+    psds_eval = PSDSEval(
+        ground_truth=gt,
+        metadata=durations,
+        dtc_threshold=dtc_threshold,
+        gtc_threshold=gtc_threshold,
+        cttc_threshold=cttc_threshold,
+    )
+
+    for i, k in enumerate(prediction_dfs.keys()):
+        det = prediction_dfs[k]
+        # see issue https://github.com/audioanalytic/psds_eval/issues/3
+        det["index"] = range(1, len(det) + 1)
+        det = det.set_index("index")
+        psds_eval.add_operating_point(
+            det, info={"name": f"Op {i + 1:02d}", "threshold": k}
+        )
+
+    global_psds = psds_eval.psds(alpha_ct=alpha_ct, alpha_st=alpha_st, max_efpr=max_efpr).value
+    classwise_curves = psds_eval.psd_roc_curves(alpha_ct=alpha_ct, linear_interp=False)[0]
+
+    classwise_psds = {c: auc(classwise_curves.xp, classwise_curves.yp[i], max_x=max_efpr) / max_efpr
+                        for i,c in enumerate(classes_labels)}
+
+    return global_psds, classwise_psds
