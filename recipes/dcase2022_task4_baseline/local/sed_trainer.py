@@ -2,7 +2,6 @@ import os
 import random
 from copy import deepcopy
 from pathlib import Path
-
 import pandas as pd
 import pytorch_lightning as pl
 import torch
@@ -12,14 +11,17 @@ from desed_task.data_augm import mixup
 from desed_task.utils.scaler import TorchScaler
 import numpy as np
 import torchmetrics
+import pickle
 
 from .utils import (
     batched_decode_preds,
     log_sedeval_metrics,
 )
+
 from desed_task.evaluation.evaluation_measures import (
     compute_per_intersection_macro_f1,
     compute_psds_from_operating_points,
+    compute_psds_classwise,
 )
 
 from codecarbon import EmissionsTracker
@@ -80,6 +82,7 @@ class SEDTask4(pl.LightningModule):
         self.scheduler = scheduler
         self.fast_dev_run = fast_dev_run
         self.evaluation = evaluation
+        self.pp_params = {}
 
         if self.fast_dev_run:
             self.num_workers = 1
@@ -550,12 +553,30 @@ class SEDTask4(pl.LightningModule):
             self.log("test/student/loss_strong", loss_strong_student)
             self.log("test/teacher/loss_strong", loss_strong_teacher)
 
+        #Sigmoid layer for Conformer model
+        if self.supervised_loss == torch.nn.BCEWithLogitsLoss():
+            strong_preds_student = torch.sigmoid(strong_preds_student)
+            weak_preds_student = torch.sigmoid(weak_preds_student)
+            strong_preds_teacher = torch.sigmoid(strong_preds_teacher)
+            weak_preds_teacher = torch.sigmoid(weak_preds_teacher)
+
+        #Choose parameters depending on class-wise or global post-processing
+        threshold = self.hparams["training"]["val_thresholds"]
+        if self.hparams["post-processing"]["class-wise"]:
+            cw_threshold = list(self.pp_params["threshold"].values()) 
+            median_filter = list(self.pp_params["median_filtering"].values())
+            binarization_type = 'class_threshold' 
+        else:   
+            median_filter = self.hparams["training"]["median_window"]
+            cw_threshold = None
+            binarization_type = 'global_threshold' 
+
         # compute psds
         decoded_student_strong = batched_decode_preds(
             strong_preds_student,
             filenames,
             self.encoder,
-            median_filter=self.hparams["training"]["median_window"],
+            median_filter=median_filter,
             thresholds=list(self.test_psds_buffer_student.keys()),
         )
 
@@ -568,7 +589,7 @@ class SEDTask4(pl.LightningModule):
             strong_preds_teacher,
             filenames,
             self.encoder,
-            median_filter=self.hparams["training"]["median_window"],
+            median_filter=median_filter,
             thresholds=list(self.test_psds_buffer_teacher.keys()),
         )
 
@@ -583,8 +604,10 @@ class SEDTask4(pl.LightningModule):
             strong_preds_student,
             filenames,
             self.encoder,
-            median_filter=self.hparams["training"]["median_window"],
-            thresholds=[0.5],
+            median_filter=median_filter,
+            thresholds=threshold,
+            binarization_type=binarization_type,
+            cw_thresholds=cw_threshold,
         )
 
         self.decoded_student_05_buffer = self.decoded_student_05_buffer.append(
@@ -595,8 +618,10 @@ class SEDTask4(pl.LightningModule):
             strong_preds_teacher,
             filenames,
             self.encoder,
-            median_filter=self.hparams["training"]["median_window"],
-            thresholds=[0.5],
+            median_filter=median_filter,
+            thresholds=threshold,
+            binarization_type=binarization_type,
+            cw_thresholds=cw_threshold,
         )
 
         self.decoded_teacher_05_buffer = self.decoded_teacher_05_buffer.append(
@@ -749,6 +774,179 @@ class SEDTask4(pl.LightningModule):
 
             for key in results.keys():
                 self.log(key, results[key], prog_bar=True, logger=False)
+    
+    def get_prediction_dataframe(self, 
+                                span=1, 
+                                threshold=[0.5],
+                                binarization_type="global_threshold",
+                                cw_thresholds=None):
+        
+        predictions_df = {k: pd.DataFrame() for k in threshold}
+
+        for batch_idx, batch in enumerate(self.val_dataloader()): #val_loader
+            audio, labels, padded_indxs, filenames = batch  
+            audio = audio.cuda()
+            
+            #Predictions for student model
+            mels = self.mel_spec(audio)
+            strong_preds_student, weak_preds_student = self.detect(mels, self.sed_student)
+
+            #For calculating post-processing parameters only stronly-labeled data is used
+            mask_synth = (
+                torch.tensor(
+                    [
+                        str(Path(x).parent)
+                        == str(Path(self.hparams["data"]["synth_val_folder"]))
+                        for x in filenames
+                    ]
+                )
+                .to(audio)
+                .bool()
+            )
+
+            if torch.any(mask_synth):
+                filenames_synth = [
+                    x
+                    for x in filenames
+                    if Path(x).parent == Path(self.hparams["data"]["synth_val_folder"])
+                ]
+
+                #Apply sigmoid layer if necessary
+                if self.supervised_loss == torch.nn.BCEWithLogitsLoss():
+                    strong_preds_student = torch.sigmoid(strong_preds_student)
+
+                #Calculate decoded predictions 
+                batched_pred = batched_decode_preds(
+                    strong_preds_student[mask_synth],
+                    filenames_synth,
+                    self.encoder,
+                    median_filter=span,
+                    thresholds=threshold,
+                    binarization_type=binarization_type,
+                    cw_thresholds=cw_thresholds
+                )
+
+                for th in threshold: #psds
+                    predictions_df[th] = predictions_df[th].append(
+                        batched_pred[th], 
+                        ignore_index=True)
+
+        return predictions_df
+    
+    def search_best_threshold(self, step, target="Event"):
+        assert 0 < step < 1.0
+        assert target in ["Event", "Frame"]
+        best_th = {k: 0.0 for k in self.encoder.labels}
+        best_f1 = {k: 0.0 for k in self.encoder.labels}
+
+        for th in np.arange(step, 1.0, step):
+            prediction_df = self.get_prediction_dataframe(
+                    threshold=[th],
+                    binarization_type="global_threshold",
+                )
+            
+           
+            events_metric = log_sedeval_metrics(
+                prediction_df[th], self.hparams["data"]["synth_val_tsv"],)[2]
+            for i, label in enumerate(self.encoder.labels):
+                f1 = events_metric[label]["f_measure"]["f_measure"]
+
+                if f1 > best_f1[label]:
+                    best_th[label] = np.round(th,1)
+                    best_f1[label] = f1
+
+        print("best_th: ", best_th)
+        print("best_f1: ", best_f1)
+        return best_th, best_f1 
+    
+    def search_best_median(self, spans, best_th=None, target="Event", obj_metric='event-f1'):
+
+        assert obj_metric in ['eventf1', 'psds1', 'psds2']
+        best_span = {k: 1 for k in self.encoder.labels}
+        best_metric = {k: 0.0 for k in self.encoder.labels}
+
+        for span in spans:
+            if best_th is not None:
+                if obj_metric == "eventf1":
+                    prediction_df = self.get_prediction_dataframe(
+                        span=span,
+                        threshold = [0.5],
+                        cw_thresholds=list(best_th.values()),
+                        binarization_type="class_threshold",
+                    )
+                    events_metric = log_sedeval_metrics(
+                        prediction_df[0.5], self.hparams["data"]["synth_val_tsv"],)[2]
+                else: #psds1/psds2
+                    psds_n_thresholds = self.hparams["training"]["n_test_thresholds"]
+                    psds_thresholds = np.arange(
+                        1 / (psds_n_thresholds * 2), 1, 1 / psds_n_thresholds
+                    )
+                    prediction_df = self.get_prediction_dataframe(
+                        span=span,
+                        threshold = list(psds_thresholds),
+                    )
+                    if obj_metric == 'psds1':
+                        psds1, psds1_classwise = compute_psds_classwise(
+                        prediction_df,
+                        self.hparams["data"]["synth_val_tsv"],
+                        self.hparams["data"]["synth_val_dur"],
+                        self.encoder.labels,
+                        dtc_threshold=0.7,
+                        gtc_threshold=0.7,
+                        alpha_ct=0,
+                        alpha_st=1,
+                        )
+                    elif obj_metric == 'psds2':
+                        psds2, psds2_classwise = compute_psds_classwise(
+                            prediction_df,
+                            self.hparams["data"]["synth_val_tsv"],
+                            self.hparams["data"]["synth_val_dur"],
+                            self.encoder.labels,
+                            dtc_threshold=0.1,
+                            gtc_threshold=0.1,
+                            cttc_threshold=0.3,
+                            alpha_ct=0.5,
+                            alpha_st=1,
+                        )
+            else:
+                prediction_df = self.get_prediction_dataframe(span=span)
+
+            for i, label in enumerate(self.encoder.labels):
+                if obj_metric == 'eventf1':
+                    obj_metric_val = events_metric[label]["f_measure"]["f_measure"]
+                elif obj_metric == 'psds1':
+                    obj_metric_val = psds1_classwise[label]
+                elif obj_metric == 'psds2':
+                    obj_metric_val = psds2_classwise[label]
+                if obj_metric_val > best_metric[label]:
+                    best_span[label] = span
+                    best_metric[label] = obj_metric_val
+
+        print("best_span: ", best_span)
+        print(f'best_{obj_metric}: ', best_metric)
+        return best_span, best_metric
+    
+    
+    def optimize_post_processing(self):
+        print("Looking for best threshold...")
+        best_th, best_f1 = self.search_best_threshold(step=0.1,)
+        print("Looking for best median value...")
+        best_fs, best_metric = self.search_best_median(spans=list(range(1, 31, 2)),
+                                                        best_th=best_th,
+                                                        obj_metric=self.hparams['post-processing']['obj_metric'])
+
+        self.pp_params = {
+            "threshold": best_th,
+            "median_filtering": best_fs,
+        }
+
+        print("===================")
+        print("best_th: ", best_th)
+        print("best_fs: ", best_fs)
+        
+        #Save best parameters int the experiment folder
+        with open(os.path.join(self.exp_dir,f"pp_params_{self.hparams['post-processing']['obj_metric']}.pickle"), "wb") as f:
+            pickle.dump(self.pp_params, f)
 
     def configure_optimizers(self):
         return [self.opt], [self.scheduler]
@@ -792,6 +990,20 @@ class SEDTask4(pl.LightningModule):
             f.write(str(training_kwh))
 
     def on_test_start(self) -> None:
+
+        #Class-wise post-processing
+        if self.hparams["post-processing"]["class-wise"]:
+            try:
+                with open(os.path.join(self.exp_dir,f"pp_params_{self.hparams['post-processing']['obj_metric']}.pickle"), "rb") as f:
+                    self.pp_params = pickle.load(f)
+                    print("\nLoaded post-process params: ")
+                    print('Best threshold: ', self.pp_params['threshold'].values())
+                    print('Best median window: ', self.pp_params['median_filtering'].values())
+            except:
+                if len(self.pp_params)==0:
+                    print("\nOptimizing post-processing parameters...")
+                    self.optimize_post_processing()
+
 
         if self.evaluation:
             os.makedirs(os.path.join(self.exp_dir, "evaluation_codecarbon"), exist_ok=True)

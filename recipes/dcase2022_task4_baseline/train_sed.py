@@ -12,6 +12,11 @@ import pytorch_lightning as pl
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 from pytorch_lightning.loggers import TensorBoardLogger
 
+import sys
+
+#Add path of main folder
+# sys.path.insert(1, '/opt/Experimentos/SB/audias_dcase/audias-dcase-task4')
+
 from desed_task.dataio import ConcatDatasetBatchSampler
 from desed_task.dataio.datasets import StronglyAnnotatedSet, UnlabeledSet, WeakSet
 from desed_task.nnet.CRNN import CRNN
@@ -217,8 +222,18 @@ def single_run(
             ),
         ]
     else:
+        #Synthetic validation data for finding best post-procesing values
+        synth_df_val = pd.read_csv(config["data"]["synth_val_tsv"], sep="\t")
+        synth_val = StronglyAnnotatedSet(
+            config["data"]["synth_val_folder"],
+            synth_df_val,
+            encoder,
+            return_filename=True,
+            pad_to=config["data"]["audio_max_len"],
+        )
+
         train_dataset = None
-        valid_dataset = None
+        valid_dataset = synth_val
         batch_sampler = None
         opt = None
         exp_scheduler = None
@@ -371,7 +386,7 @@ if __name__ == "__main__":
         pl.seed_everything(seed)
 
     test_only = test_from_checkpoint is not None
-    resample_data_generate_durations(configs["data"], test_only, evaluation)
+    # resample_data_generate_durations(configs["data"], test_only, evaluation)
     single_run(
         configs,
         args.log_dir,
